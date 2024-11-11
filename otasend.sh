@@ -4,7 +4,7 @@
 # openssl server running. It is starte with command
 # openssl s_server -WWW -key ca_key.pem -cert ca_cert.pem -port 8070
 # *.pem files are in same directory.
-# sensors_x.x.x.x is copied to servers ota subdirectory.
+# rgb7segdisplay_x.x.x.x is copied to servers ota subdirectory.
 
 # see also CONFIG_APP_PROJECT_VER and CONFIG_FIRMWARE_UPGRADE_URL
 # in sdkconfig.
@@ -13,17 +13,17 @@
 # 5bcae4 boiler
 # 5bc674 led strip controller
 
-DEVICE="fd9030"
+DEVICE="5bc674"
 
 cat sdkconfig | grep 'CONFIG_APP_PROJECT_VER=' > vernum.tmp
 . ./vernum.tmp
-FNAME="refrigerator_$CONFIG_APP_PROJECT_VER"
+FNAME="rgb7segdisplay_$CONFIG_APP_PROJECT_VER"
 echo $FNAME
 sftp pi@192.168.101.233 << EOF
 cd srv/ota
-put build/refrigerator.bin $FNAME
+put build/rgb7segdisplay.bin $FNAME
 EOF
 
-FILESIZE="$(stat -c%s build/refrigerator.bin)"
+FILESIZE="$(stat -c%s build/rgb7segdisplay.bin)"
 python otastatus.py $DEVICE $FNAME $FILESIZE
 

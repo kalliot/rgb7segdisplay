@@ -22,13 +22,13 @@ def processData(data, filelen):
         percentage = int(100 * len / filelen)
         print(percentage,"%",end='\r')
 
-# home/kallio/refrigerator/${DEVICE}/otaupdate
+# home/kallio/rgb7segdisplay/${DEVICE}/otaupdate
 # {\"dev\":\"${DEVICE}\",\"id\":\"otaupdate\",\"file\":\"${FNAME}\"}
 
 def startTransfer(device, file):
     global lastRead
 
-    topic = "home/kallio/refrigerator/" + device + "/otaupdate"
+    topic = "home/kallio/rgb7segdisplay/" + device + "/otaupdate"
     now = int(time.time())
     startmsg = {
         'dev': device,
@@ -48,7 +48,7 @@ def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
         connected = True
-        topics = [("home/kallio/refrigerator/+/otaupdate",0)]
+        topics = [("home/kallio/rgb7segdisplay/+/otaupdate",0)]
         client.subscribe(topics)
 
     else:
