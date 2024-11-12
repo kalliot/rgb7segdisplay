@@ -136,8 +136,6 @@ static void set_7seg(char *str, struct color c)
             break;
 
             case '0':
-            case 'O':
-            case 'o':
                 SET_SEGMENT(i,a,c);
                 SET_SEGMENT(i,b,c);
                 SET_SEGMENT(i,c,c);
@@ -165,8 +163,25 @@ static void set_7seg(char *str, struct color c)
                 SET_SEGMENT(i,f,c);
             break;
 
+           case 'b':
+           case 'B':
+                SET_SEGMENT(i,c,c);
+                SET_SEGMENT(i,d,c);
+                SET_SEGMENT(i,e,c);
+                SET_SEGMENT(i,f,c);
+                SET_SEGMENT(i,g,c);
+            break;
+
             case '-':
                 SET_SEGMENT(i,g,c);
+            break;
+
+            case 'O':
+            case 'o':
+                SET_SEGMENT(i,g,c);
+                SET_SEGMENT(i,c,c);
+                SET_SEGMENT(i,d,c);
+                SET_SEGMENT(i,e,c);
             break;
 
             case 'E':

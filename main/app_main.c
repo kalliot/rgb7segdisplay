@@ -78,12 +78,26 @@ struct netinfo {
 
 struct config {
     char specialsensor[20];
-    int  intelnalTemperature;
+    int showinternaltemp;
 };
 
-struct config setup = { .intelnalTemperature = 1};
+struct config setup = { .showinternaltemp = 1};
 
-
+struct colorname {
+    char *name;
+    struct color c;
+} colornames[] =
+{
+    {"red",   {50,  0,  0}},
+    {"green", { 0, 50,  0}},
+    {"blue",  { 0,  0, 50}},
+    {"cyan",  { 0, 50, 50}},
+    {"purple",{50,  0, 50}},
+    {"yellow",{50, 50,  0}},
+    {"white", {50, 50, 50}},
+    {"pink",  {50,  5, 20}},
+    {"\0",    {50,  0,  0}}
+};
 // globals
 
 struct netinfo *comminfo;
@@ -103,7 +117,9 @@ static char otaUpdateTopic[64];
 static int retry_num = 0;
 static char *program_version = "";
 static char appname[20];
-static struct color default_color = { 50, 0 ,0};
+static struct colorname *default_color = &colornames[1];
+static struct colorname *low_color = &colornames[2];
+static struct colorname *high_color = &colornames[0];
 
 static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid);
 static void sendInfo(esp_mqtt_client_handle_t client, uint8_t *chipid);
@@ -177,8 +193,25 @@ static void log_error_if_nonzero(const char *message, int error_code)
     }
 }
 
+// if value = 8888 show last known temperature
+static void show_internaltemp(float value)
+{
+    struct colorname *dispcolor;
+    static int dispvar;
 
+    if (value != 8888)
+    {
+        dispvar = value * 100; // we dont have decimal point in display.
+    }
 
+    if (dispvar < 2300) dispcolor = low_color;
+    else if (dispvar > 2600) dispcolor = high_color;
+    else dispcolor = default_color;
+
+    char buff[6];
+    sprintf(buff,"%4d", dispvar);
+    rgb7seg_display(buff,dispcolor->c);
+}
 /* ../setsetup -m '{"dev":"fd9030","id":"setsensorfriendlyname", "sensor": "28c1cf574e13c97", "name":"inside"}'
    ../setsetup -m '{"dev":"fd9030","id":"setsensorfriendlyname", "sensor": "28524a256002a", "name": "outside"}'
 */
@@ -202,48 +235,64 @@ static void sensorFriendlyName(cJSON *root)
 /* ../setsetup -m '{"temperature": 8, "hysteresis": 2, "mintimeon": 120, "lopriceboost": 2, "hipricereduce", 1}'
 */
 
+static struct colorname *get_color(char *name)
+{
+    int i=0;
+    for (; colornames[i].name[0] != 0;i++)
+    {
+        if (!strcmp(colornames[i].name, name))
+            return &colornames[i];
+    }
+    return NULL;
+}
+
 static void readSetupJson(cJSON *root)
 {
-    bool reinit_needed = false;
-
+    bool redisp_needed = false;
+    char *cname;
+    struct colorname *c;
     // add here the setup parameter reads from json.
     // store them to flash
-    if (getJsonInt(root,"inttemp", &setup.intelnalTemperature))
+    if (getJsonInt(root,"inttemp", &setup.showinternaltemp))
     {
-        flash_write("inttemp",setup.intelnalTemperature);
+        flash_write("inttemp",setup.showinternaltemp);
     }
-    if (reinit_needed)
+
+    cname = getJsonStr(root,"defaultcolor");
+    c = get_color(cname);
+    if (c != NULL)
+    {
+        default_color = c;
+        flash_write_str("defaultcolor", cname);
+        redisp_needed = true;
+    }
+
+    cname = getJsonStr(root,"highcolor");
+    c = get_color(cname);
+    if (c != NULL)
+    {
+        high_color = c;
+        flash_write_str("highcolor",cname);
+        redisp_needed = true;
+    }
+
+    cname = getJsonStr(root,"lowcolor");
+    c = get_color(cname);
+    if (c != NULL)
+    {
+        low_color = c;
+        flash_write_str("lowcolor",cname);
+        redisp_needed = true;
+    }
+
+    if (redisp_needed)
     {
         ESP_LOGI(TAG,"doing some reinit stuff.");
+        show_internaltemp(8888);
     }
     flash_commitchanges();
 }
 
-struct colorname {
-    char *name;
-    struct color c;
-} colornames[] =
-{
-    {"red",   {50,  0,  0}},
-    {"green", { 0, 50,  0}},
-    {"blue",  { 0,  0, 50}},
-    {"cyan",  { 0, 50, 50}},
-    {"yellow",{50, 50,  0}},
-    {"white", {50, 50, 50}},
-    {"pink",  {50,  5, 20}},
-    {"\0",    {50,  0,  0}}
-};
-
-static struct color get_color(char *name)
-{
-    int i=0;
-    for (; colornames[i].name[0] != 0;i++) 
-    {
-        if (!strcmp(colornames[i].name, name))
-            break;
-    }
-    return colornames[i].c;
-}
 
 static bool handleJson(esp_mqtt_event_handle_t event, uint8_t *chipid)
 {
@@ -273,10 +322,18 @@ static bool handleJson(esp_mqtt_event_handle_t event, uint8_t *chipid)
     }
     else if (!strcmp(id,"show"))
     {
-        struct color c = get_color(getJsonStr(root,"color")); 
         char *data = getJsonStr(root,"data");
 
-        rgb7seg_display(data,c);
+        char *name = getJsonStr(root,"color");
+        if (name[0] != 0)
+        {
+            struct colorname *c = get_color(getJsonStr(root,"color"));
+            rgb7seg_display(data,c->c);
+        }
+        else
+        {
+            rgb7seg_display(data,default_color->c);
+        }
         ret = true;
     }
     else if (!strcmp(id,"sensorsetup"))
@@ -326,7 +383,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         ESP_LOGI(TAG, "sent subscribe %s successful, msg_id=%d", dataTopic, msg_id);
 
         gpio_set_level(MQTTSTATUS_GPIO, true);
-        rgb7seg_display("mqtt",default_color);
+        rgb7seg_display("mqtt",default_color->c);
         device_sendstatus(client, comminfo->mqtt_prefix, appname, (uint8_t *) handler_args);
         isConnected = true;
         statistics_getptr()->connectcnt++;
@@ -443,15 +500,40 @@ static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid)
 
     char setupTopic[80];
 
+    sprintf(setupTopic,"%s/%s/%x%x%x/setup",
+         comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
+    sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"setup\",\"defaultcolor\":\"%s\",\"lowcolor\":\"%s\",\"highcolor\":\"%s\",\"showinternaltemp\":%d}",
+                chipid[3],chipid[4],chipid[5],
+                default_color->name,
+                low_color->name,
+                high_color->name,
+                setup.showinternaltemp);
+    esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+
     sprintf(setupTopic,"%s/%s/%x%x%x/sensorsetup",
          comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
     sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"sensorsetup\",\"specialsensor\":\"%s\"}",
                 chipid[3],chipid[4],chipid[5],
                 setup.specialsensor);
     esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
-    vTaskDelay(10 / portTICK_PERIOD_MS);            
+    vTaskDelay(10 / portTICK_PERIOD_MS);
     statistics_getptr()->sendcnt++;
 
+    char colorvalue[10];
+    for (int i=0; colornames[i].name[0]!=0; i++)
+    {
+        sprintf(colorvalue,"#%02x%02x%02x", colornames[i].c.r, colornames[i].c.g, colornames[i].c.b);
+        sprintf(setupTopic,"%s/%s/%02x%02x%02x/color/%s",
+        comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5], colornames[i].name);
+        sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"color\",\"name\":\"%s\",\"value\":\"%s\"}",
+                    chipid[3],chipid[4],chipid[5],
+                    colornames[i].name, colorvalue);
+
+        esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
+        statistics_getptr()->sendcnt++;
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
     for (int i = 0; ; i++)
     {
         char *sensoraddr = temperature_getsensor(i);
@@ -468,6 +550,7 @@ static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid)
 
         esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
         statistics_getptr()->sendcnt++;
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
     gpio_set_level(BLINK_GPIO, false);
 }
@@ -525,7 +608,7 @@ static void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_b
         gpio_set_level(WLANSTATUS_GPIO, true);
         retry_num = 0;
         healthyflags |= HEALTHYFLAGS_WIFI;
-        rgb7seg_display("lan",default_color);
+        rgb7seg_display("lan",default_color->c);
     }
 }
 
@@ -593,8 +676,19 @@ struct netinfo *get_networkinfo()
 
 void readSetup(void)
 {
-    strcpy(setup.specialsensor, flash_read_str("specsensor", setup.specialsensor,20));
-    setup.intelnalTemperature = flash_read("inttemp", setup.intelnalTemperature);
+    char *colorname;
+
+    strcpy(setup.specialsensor, flash_read_str("specsensor", setup.specialsensor,12));
+    colorname = flash_read_str("defaultcolor", default_color->name, 12);
+    default_color = get_color(colorname);
+
+    colorname = flash_read_str("highcolor", high_color->name, 12);
+    high_color = get_color(colorname);
+
+    colorname = flash_read_str("lowcolor", low_color->name, 12);
+    low_color = get_color(colorname);
+
+    setup.showinternaltemp = flash_read("inttemp", setup.showinternaltemp);
 }
 
 
@@ -641,7 +735,7 @@ void app_main(void)
     flash_open("storage");
     comminfo = get_networkinfo();
     
-    rgb7seg_display("init",default_color);
+    rgb7seg_display("init",default_color->c);
 
     if (comminfo == NULL)
     {
@@ -730,16 +824,12 @@ void app_main(void)
                         char *sensorid = temperature_getsensor(meas.gpio);
                         if (sensorid != NULL)
                         {
-                            if (setup.intelnalTemperature)
+                            if (setup.showinternaltemp)
                             {
                                 ESP_LOGI(TAG,"comparing %s == %s", setup.specialsensor, sensorid );
                                 if (!strcmp(setup.specialsensor, sensorid))
                                 {
-                                    int dispvar = meas.data.temperature * 100; // we dont have decimal point in display.
-                                    char buff[6];
-                                    struct color c = { 20,0,0};
-                                    sprintf(buff,"%4d", dispvar);
-                                    rgb7seg_display(buff,c);
+                                    show_internaltemp(meas.data.temperature);
                                 }
                             }    
                             if (isConnected) 
@@ -760,6 +850,16 @@ void app_main(void)
 
                     case OTA:
                         ota_status_publish(&meas, client);
+                        if (meas.data.count == 0)
+                        {
+                            rgb7seg_display("boot",default_color->c);
+                        }
+                        else
+                        {
+                            char buff[6];
+                            sprintf(buff,"%d",(int) (meas.data.count / 100));
+                            rgb7seg_display(buff,default_color->c);
+                        }
                     break;
 
                     default:
