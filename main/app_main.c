@@ -79,9 +79,13 @@ struct netinfo {
 struct config {
     char specialsensor[20];
     int showinternaltemp;
+    int zonelow;
+    int zonehigh;
 };
 
-struct config setup = { .showinternaltemp = 1};
+struct config setup = { .showinternaltemp = 1,
+                         .zonelow = 2300,
+                         .zonehigh = 2600};
 
 struct colorname {
     char *name;
@@ -197,24 +201,21 @@ static void log_error_if_nonzero(const char *message, int error_code)
 static void show_internaltemp(float value)
 {
     struct colorname *dispcolor;
-    static int dispvar;
+    static int dispvar = 0;
 
     if (value != 8888)
     {
         dispvar = value * 100; // we dont have decimal point in display.
     }
 
-    if (dispvar < 2300) dispcolor = low_color;
-    else if (dispvar > 2600) dispcolor = high_color;
+    if (dispvar < setup.zonelow) dispcolor = low_color;
+    else if (dispvar > setup.zonehigh) dispcolor = high_color;
     else dispcolor = default_color;
 
     char buff[6];
     sprintf(buff,"%4d", dispvar);
     rgb7seg_display(buff,dispcolor->c);
 }
-/* ../setsetup -m '{"dev":"fd9030","id":"setsensorfriendlyname", "sensor": "28c1cf574e13c97", "name":"inside"}'
-   ../setsetup -m '{"dev":"fd9030","id":"setsensorfriendlyname", "sensor": "28524a256002a", "name": "outside"}'
-*/
 
 
 static void sensorFriendlyName(cJSON *root)
@@ -282,6 +283,18 @@ static void readSetupJson(cJSON *root)
     {
         low_color = c;
         flash_write_str("lowcolor",cname);
+        redisp_needed = true;
+    }
+
+    if (getJsonInt(root, "zonelow", &setup.zonelow))
+    {
+        flash_write("zonelow", setup.zonelow);
+        redisp_needed = true;
+    }
+
+    if (getJsonInt(root, "zonehigh", &setup.zonehigh))
+    {
+        flash_write("zonehigh", setup.zonehigh);
         redisp_needed = true;
     }
 
@@ -500,26 +513,6 @@ static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid)
 
     char setupTopic[80];
 
-    sprintf(setupTopic,"%s/%s/%x%x%x/setup",
-         comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
-    sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"setup\",\"defaultcolor\":\"%s\",\"lowcolor\":\"%s\",\"highcolor\":\"%s\",\"showinternaltemp\":%d}",
-                chipid[3],chipid[4],chipid[5],
-                default_color->name,
-                low_color->name,
-                high_color->name,
-                setup.showinternaltemp);
-    esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-
-    sprintf(setupTopic,"%s/%s/%x%x%x/sensorsetup",
-         comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
-    sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"sensorsetup\",\"specialsensor\":\"%s\"}",
-                chipid[3],chipid[4],chipid[5],
-                setup.specialsensor);
-    esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-    statistics_getptr()->sendcnt++;
-
     char colorvalue[10];
     for (int i=0; colornames[i].name[0]!=0; i++)
     {
@@ -534,6 +527,30 @@ static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid)
         statistics_getptr()->sendcnt++;
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
+
+    sprintf(setupTopic,"%s/%s/%x%x%x/setup",
+         comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
+    sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"setup\",\"defaultcolor\":\"%s\",\"lowcolor\":\"%s\",\"highcolor\":\"%s\",\"zonelow\":\"%d\",\"zonehigh\":\"%d\",\"showinternaltemp\":%d}",
+                chipid[3],chipid[4],chipid[5],
+                default_color->name,
+                low_color->name,
+                high_color->name,
+                setup.zonelow,
+                setup.zonehigh,
+                setup.showinternaltemp);
+    esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
+    statistics_getptr()->sendcnt++;
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+
+    sprintf(setupTopic,"%s/%s/%x%x%x/sensorsetup",
+         comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
+    sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"sensorsetup\",\"specialsensor\":\"%s\"}",
+                chipid[3],chipid[4],chipid[5],
+                setup.specialsensor);
+    esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+    statistics_getptr()->sendcnt++;
+
     for (int i = 0; ; i++)
     {
         char *sensoraddr = temperature_getsensor(i);
@@ -687,6 +704,9 @@ void readSetup(void)
 
     colorname = flash_read_str("lowcolor", low_color->name, 12);
     low_color = get_color(colorname);
+
+    setup.zonelow  = flash_read("zonelow", setup.zonelow);
+    setup.zonehigh = flash_read("zonehigh", setup.zonehigh);
 
     setup.showinternaltemp = flash_read("inttemp", setup.showinternaltemp);
 }
