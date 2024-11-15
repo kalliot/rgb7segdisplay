@@ -105,6 +105,11 @@ struct colorname {
     {"yellow",{50, 50,  0}},
     {"white", {50, 50, 50}},
     {"pink",  {50,  5, 20}},
+    {"gold",  {50, 42,  0}},
+    {"orange",{50, 32,  0}},
+    {"tomato",{50, 19, 14}},
+    {"sky",   { 0, 37, 50}},
+    {"aqua",  {25, 50, 41}},
     {"\0",    {50,  0,  0}}
 };
 // globals
@@ -526,7 +531,8 @@ static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid, uint8_t 
         char colorvalue[10];
         for (int i=0; colornames[i].name[0]!=0; i++)
         {
-            sprintf(colorvalue,"#%02x%02x%02x", colornames[i].c.r, colornames[i].c.g, colornames[i].c.b);
+            // multiply colorvalues, otherwise they are not visible enough in web browser.
+            sprintf(colorvalue,"#%02x%02x%02x", 3 * colornames[i].c.r, 3* colornames[i].c.g, 3 * colornames[i].c.b);
             sprintf(setupTopic,"%s/%s/%02x%02x%02x/color/%s",
             comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5], colornames[i].name);
             sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"color\",\"name\":\"%s\",\"value\":\"%s\"}",
