@@ -65,6 +65,11 @@
 #define HEALTHYFLAGS_TEMP 4
 #define HEALTHYFLAGS_NTP  8
 
+#define SETUP_ALL     0xff
+#define SETUP_COLORS  0x01
+#define SETUP_NAMES   0x02
+#define SETUP_MISC    0x04
+#define SETUP_SENSORS 0x08
 
 
 struct netinfo {
@@ -125,7 +130,7 @@ static struct colorname *default_color = &colornames[1];
 static struct colorname *low_color = &colornames[2];
 static struct colorname *high_color = &colornames[0];
 
-static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid);
+static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid, uint8_t flags);
 static void sendInfo(esp_mqtt_client_handle_t client, uint8_t *chipid);
 
 
@@ -254,7 +259,7 @@ static void readSetupJson(cJSON *root)
     struct colorname *c;
     // add here the setup parameter reads from json.
     // store them to flash
-    if (getJsonInt(root,"inttemp", &setup.showinternaltemp))
+    if (getJsonInt(root,"showinternaltemp", &setup.showinternaltemp))
     {
         flash_write("inttemp",setup.showinternaltemp);
     }
@@ -307,10 +312,10 @@ static void readSetupJson(cJSON *root)
 }
 
 
-static bool handleJson(esp_mqtt_event_handle_t event, uint8_t *chipid)
+static uint8_t handleJson(esp_mqtt_event_handle_t event, uint8_t *chipid)
 {
     cJSON *root = cJSON_Parse(event->data);
-    bool ret = false;
+    uint8_t ret = 0;
     char id[20];
     time_t now;
 
@@ -331,7 +336,7 @@ static bool handleJson(esp_mqtt_event_handle_t event, uint8_t *chipid)
     else if (!strcmp(id,"setup"))
     {
         readSetupJson(root);
-        ret = true;
+        ret |= SETUP_MISC;
     }
     else if (!strcmp(id,"show"))
     {
@@ -347,17 +352,17 @@ static bool handleJson(esp_mqtt_event_handle_t event, uint8_t *chipid)
         {
             rgb7seg_display(data,default_color->c);
         }
-        ret = true;
     }
     else if (!strcmp(id,"sensorsetup"))
     {
         strncpy(setup.specialsensor,getJsonStr(root,"specialsensor"),20);
         flash_write_str("specsensor", setup.specialsensor);
-        ret = true;
+        ret |= SETUP_SENSORS;
     }
     else if (!strcmp(id,"sensorfriendlyname"))
     {
         sensorFriendlyName(root);
+        ret |= SETUP_NAMES;
     }
     cJSON_Delete(root);
     return ret;
@@ -380,6 +385,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     esp_mqtt_event_handle_t event = event_data;
     esp_mqtt_client_handle_t client = event->client;
     int msg_id;
+    uint8_t flags=0;
     
 
     switch ((esp_mqtt_event_id_t)event_id) {
@@ -401,7 +407,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         isConnected = true;
         statistics_getptr()->connectcnt++;
         sendInfo(client, (uint8_t *) handler_args);
-        sendSetup(client, (uint8_t *) handler_args);
+        sendSetup(client, (uint8_t *) handler_args, SETUP_ALL);
         temperature_sendall();
         healthyflags |= HEALTHYFLAGS_MQTT;
         break;
@@ -425,9 +431,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         break;
 
     case MQTT_EVENT_DATA:
-        if (handleJson(event,(uint8_t *) handler_args))
+        flags = handleJson(event,(uint8_t *) handler_args);
+        if (flags)
         {
-            sendSetup(client, (uint8_t *) handler_args);
+            sendSetup(client, (uint8_t *) handler_args, flags);
         }
         break;
 
@@ -507,67 +514,80 @@ static void sendInfo(esp_mqtt_client_handle_t client, uint8_t *chipid)
 */
 
 
-static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid)
+static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid, uint8_t flags)
 {
     gpio_set_level(BLINK_GPIO, true);
 
     char setupTopic[80];
 
-    char colorvalue[10];
-    for (int i=0; colornames[i].name[0]!=0; i++)
-    {
-        sprintf(colorvalue,"#%02x%02x%02x", colornames[i].c.r, colornames[i].c.g, colornames[i].c.b);
-        sprintf(setupTopic,"%s/%s/%02x%02x%02x/color/%s",
-        comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5], colornames[i].name);
-        sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"color\",\"name\":\"%s\",\"value\":\"%s\"}",
-                    chipid[3],chipid[4],chipid[5],
-                    colornames[i].name, colorvalue);
 
+    if (flags & SETUP_COLORS)
+    {
+        char colorvalue[10];
+        for (int i=0; colornames[i].name[0]!=0; i++)
+        {
+            sprintf(colorvalue,"#%02x%02x%02x", colornames[i].c.r, colornames[i].c.g, colornames[i].c.b);
+            sprintf(setupTopic,"%s/%s/%02x%02x%02x/color/%s",
+            comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5], colornames[i].name);
+            sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"color\",\"name\":\"%s\",\"value\":\"%s\"}",
+                        chipid[3],chipid[4],chipid[5],
+                        colornames[i].name, colorvalue);
+
+            esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
+            statistics_getptr()->sendcnt++;
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+    }
+
+    if (flags & SETUP_MISC)
+    {
+        sprintf(setupTopic,"%s/%s/%x%x%x/setup",
+            comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
+        sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"setup\",\"defaultcolor\":\"%s\",\"lowcolor\":\"%s\",\"highcolor\":\"%s\",\"zonelow\":\"%d\",\"zonehigh\":\"%d\",\"showinternaltemp\":%d}",
+                    chipid[3],chipid[4],chipid[5],
+                    default_color->name,
+                    low_color->name,
+                    high_color->name,
+                    setup.zonelow,
+                    setup.zonehigh,
+                    setup.showinternaltemp);
         esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
         statistics_getptr()->sendcnt++;
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 
-    sprintf(setupTopic,"%s/%s/%x%x%x/setup",
-         comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
-    sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"setup\",\"defaultcolor\":\"%s\",\"lowcolor\":\"%s\",\"highcolor\":\"%s\",\"zonelow\":\"%d\",\"zonehigh\":\"%d\",\"showinternaltemp\":%d}",
-                chipid[3],chipid[4],chipid[5],
-                default_color->name,
-                low_color->name,
-                high_color->name,
-                setup.zonelow,
-                setup.zonehigh,
-                setup.showinternaltemp);
-    esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
-    statistics_getptr()->sendcnt++;
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-
-    sprintf(setupTopic,"%s/%s/%x%x%x/sensorsetup",
-         comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
-    sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"sensorsetup\",\"specialsensor\":\"%s\"}",
-                chipid[3],chipid[4],chipid[5],
-                setup.specialsensor);
-    esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-    statistics_getptr()->sendcnt++;
-
-    for (int i = 0; ; i++)
+    if (flags & SETUP_SENSORS)
     {
-        char *sensoraddr = temperature_getsensor(i);
-
-        if (sensoraddr == NULL) break;
-        sprintf(setupTopic,"%s/%s/%x%x%x/sensorfriendlyname/%s",
-        comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5], sensoraddr);
-
-        char *friendlyname = temperature_get_friendlyname(i);
-        if (friendlyname == NULL) friendlyname = "null";
-        sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"sensorfriendlyname\",\"sensor\":\"%s\",\"name\":\"%s\"}",
+        sprintf(setupTopic,"%s/%s/%x%x%x/sensorsetup",
+            comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
+        sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"sensorsetup\",\"specialsensor\":\"%s\"}",
                     chipid[3],chipid[4],chipid[5],
-                    sensoraddr, friendlyname);
-
+                    setup.specialsensor);
         esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
-        statistics_getptr()->sendcnt++;
         vTaskDelay(10 / portTICK_PERIOD_MS);
+        statistics_getptr()->sendcnt++;
+    }
+
+    if (flags & SETUP_NAMES)
+    {
+        for (int i = 0; ; i++)
+        {
+            char *sensoraddr = temperature_getsensor(i);
+
+            if (sensoraddr == NULL) break;
+            sprintf(setupTopic,"%s/%s/%x%x%x/sensorfriendlyname/%s",
+            comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5], sensoraddr);
+
+            char *friendlyname = temperature_get_friendlyname(i);
+            if (friendlyname == NULL) friendlyname = "null";
+            sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"sensorfriendlyname\",\"sensor\":\"%s\",\"name\":\"%s\"}",
+                        chipid[3],chipid[4],chipid[5],
+                        sensoraddr, friendlyname);
+
+            esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
+            statistics_getptr()->sendcnt++;
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
     }
     gpio_set_level(BLINK_GPIO, false);
 }
@@ -723,6 +743,7 @@ void app_main(void)
 {
     uint8_t chipid[8];
     time_t now, prevStatsTs;
+    int packetcount=0;
 
     esp_efuse_mac_get_default(chipid);
 
@@ -873,12 +894,19 @@ void app_main(void)
                         if (meas.data.count == 0)
                         {
                             rgb7seg_display("boot",default_color->c);
+                            packetcount = 0;
                         }
                         else
                         {
                             char buff[6];
                             sprintf(buff,"%d",(int) (meas.data.count / 100));
-                            rgb7seg_display(buff,default_color->c);
+                            if (packetcount == 2)
+                            {
+                                rgb7seg_display(buff,default_color->c);
+                                packetcount = 0;
+                            } 
+                            else
+                                packetcount++;
                         }
                     break;
 
