@@ -116,7 +116,7 @@ struct colorname {
 
 struct netinfo *comminfo;
 QueueHandle_t evt_queue = NULL;
-char jsondata[256];
+char jsondata[512];
 uint16_t sendcnt = 0;
 
 static const char *TAG = "RGB7SEGDISP";
@@ -525,24 +525,26 @@ static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid, uint8_t 
 
     char setupTopic[80];
 
-
     if (flags & SETUP_COLORS)
     {
-        char colorvalue[10];
+        sprintf(setupTopic,"%s/%s/%02x%02x%02x/colors",
+           comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
+        sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"colors\",\"colors\":[",
+            chipid[3],chipid[4],chipid[5]);
+        char colorvalue[30];
+
         for (int i=0; colornames[i].name[0]!=0; i++)
         {
             // multiply colorvalues, otherwise they are not visible enough in web browser.
-            sprintf(colorvalue,"#%02x%02x%02x", 3 * colornames[i].c.r, 3* colornames[i].c.g, 3 * colornames[i].c.b);
-            sprintf(setupTopic,"%s/%s/%02x%02x%02x/color/%s",
-            comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5], colornames[i].name);
-            sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"color\",\"name\":\"%s\",\"value\":\"%s\"}",
-                        chipid[3],chipid[4],chipid[5],
-                        colornames[i].name, colorvalue);
-
-            esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
-            statistics_getptr()->sendcnt++;
-            vTaskDelay(10 / portTICK_PERIOD_MS);
+            sprintf(colorvalue,"{\"name\":\"%s\",\"value\":\"#%02x%02x%02x\"},",
+                colornames[i].name, 3 * colornames[i].c.r, 3* colornames[i].c.g, 3 * colornames[i].c.b);
+            strcat(jsondata,colorvalue);
         }
+        jsondata[strlen(jsondata)-1] = 0; // cut last comma
+        strcat(jsondata,"]}");
+        esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
+        statistics_getptr()->sendcnt++;
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 
     if (flags & SETUP_MISC)
@@ -576,24 +578,26 @@ static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid, uint8_t 
 
     if (flags & SETUP_NAMES)
     {
+        sprintf(setupTopic,"%s/%s/%x%x%x/tempsensors",
+            comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
+        sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"tempsensors\",\"names\":[",
+            chipid[3],chipid[4],chipid[5]);
+
+        char sensorname[40];
+
         for (int i = 0; ; i++)
         {
             char *sensoraddr = temperature_getsensor(i);
 
             if (sensoraddr == NULL) break;
-            sprintf(setupTopic,"%s/%s/%x%x%x/sensorfriendlyname/%s",
-            comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5], sensoraddr);
-
-            char *friendlyname = temperature_get_friendlyname(i);
-            if (friendlyname == NULL) friendlyname = "null";
-            sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"sensorfriendlyname\",\"sensor\":\"%s\",\"name\":\"%s\"}",
-                        chipid[3],chipid[4],chipid[5],
-                        sensoraddr, friendlyname);
-
-            esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
-            statistics_getptr()->sendcnt++;
-            vTaskDelay(10 / portTICK_PERIOD_MS);
+            sprintf(sensorname,"{\"addr\":\"%s\",\"name\":\"%s\"},",
+                sensoraddr, temperature_get_friendlyname(i));
+            strcat(jsondata,sensorname);
         }
+        jsondata[strlen(jsondata)-1] = 0; // cut last comma
+        strcat(jsondata,"]}");
+        esp_mqtt_client_publish(client, setupTopic, jsondata , 0, 0, 1);
+        statistics_getptr()->sendcnt++;
     }
     gpio_set_level(BLINK_GPIO, false);
 }

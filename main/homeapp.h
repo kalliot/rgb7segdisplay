@@ -24,7 +24,7 @@ struct measurement {
 };
 
 extern QueueHandle_t evt_queue;
-extern char jsondata[256];
+extern char jsondata[];
 
 #define BLINK_GPIO         2
 #define SETUP_GPIO         CONFIG_SETUPLED_GPIO
