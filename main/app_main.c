@@ -43,6 +43,7 @@
 
 #define TEMP_BUS 17
 #define STATISTICS_INTERVAL 1800
+#define CLOCK_INTERVAL 10
 #define ESP_INTR_FLAG_DEFAULT 0
 
 
@@ -225,6 +226,15 @@ static void show_internaltemp(float value)
     char buff[6];
     sprintf(buff,"%4d", dispvar);
     rgb7seg_display(buff,dispcolor->c);
+}
+
+static void show_clock(time_t now)
+{
+    struct tm *current_time = localtime(&now);
+    char buff[6];
+
+    sprintf(buff,"%02d%02d", current_time->tm_hour, current_time->tm_min);
+    rgb7seg_display(buff,default_color->c);
 }
 
 
@@ -753,6 +763,7 @@ void app_main(void)
 {
     uint8_t chipid[8];
     time_t now, prevStatsTs;
+    int showtime = 1;
     int packetcount=0;
 
     esp_efuse_mac_get_default(chipid);
@@ -783,6 +794,8 @@ void app_main(void)
     gpio_set_direction(MQTTSTATUS_GPIO, GPIO_MODE_OUTPUT);
 
     get_appname();
+    setenv("TZ","EST",1);
+    tzset();
     flash_open("storage");
     comminfo = get_networkinfo();
     
@@ -860,7 +873,7 @@ void app_main(void)
                     }
                 }
             }
-            if(xQueueReceive(evt_queue, &meas, STATISTICS_INTERVAL * 1000 / portTICK_PERIOD_MS)) 
+            if(xQueueReceive(evt_queue, &meas, CLOCK_INTERVAL * 1000 / portTICK_PERIOD_MS))
             {
                 time(&now);
                 uint16_t qcnt = uxQueueMessagesWaiting(evt_queue);
@@ -910,7 +923,7 @@ void app_main(void)
                         {
                             char buff[6];
                             sprintf(buff,"%d",(int) (meas.data.count / 100));
-                            if (packetcount == 2)
+                            if (packetcount == 3)
                             {
                                 rgb7seg_display(buff,default_color->c);
                                 packetcount = 0;
@@ -927,6 +940,18 @@ void app_main(void)
             else
             {   // timeout
                 ESP_LOGI(TAG,"timeout");
+                if (setup.showinternaltemp)
+                {
+                    if (showtime && now > MIN_EPOCH)
+                    {
+                        show_clock(now);
+                    }
+                    else
+                    {
+                        show_internaltemp(8888);
+                    }
+                    showtime ^= 1;
+                }
             }
         }
     }
