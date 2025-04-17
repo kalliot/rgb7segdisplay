@@ -135,6 +135,7 @@ static char appname[20];
 static struct colorname *default_color = &colornames[1];
 static struct colorname *low_color = &colornames[2];
 static struct colorname *high_color = &colornames[0];
+nvs_handle setup_flash;
 
 static void sendSetup(esp_mqtt_client_handle_t client, uint8_t *chipid, uint8_t flags);
 static void sendInfo(esp_mqtt_client_handle_t client, uint8_t *chipid);
@@ -248,8 +249,8 @@ static void sensorFriendlyName(cJSON *root)
     if (temperature_set_friendlyname(sensorname, friendlyname))
     {
         ESP_LOGD(TAG, "writing sensor %s, friendlyname %s to flash",sensorname, friendlyname);
-        flash_write_str(sensorname,friendlyname);
-        flash_commitchanges();
+        flash_write_str(setup_flash, sensorname,friendlyname);
+        flash_commitchanges(setup_flash);
     }
 }
 
@@ -276,7 +277,7 @@ static void readSetupJson(cJSON *root)
     // store them to flash
     if (getJsonInt(root,"showinternaltemp", &setup.showinternaltemp))
     {
-        flash_write("inttemp",setup.showinternaltemp);
+        flash_write(setup_flash, "inttemp",setup.showinternaltemp);
     }
 
     cname = getJsonStr(root,"defaultcolor");
@@ -284,7 +285,7 @@ static void readSetupJson(cJSON *root)
     if (c != NULL)
     {
         default_color = c;
-        flash_write_str("defaultcolor", cname);
+        flash_write_str(setup_flash, "defaultcolor", cname);
         redisp_needed = true;
     }
 
@@ -293,7 +294,7 @@ static void readSetupJson(cJSON *root)
     if (c != NULL)
     {
         high_color = c;
-        flash_write_str("highcolor",cname);
+        flash_write_str(setup_flash, "highcolor",cname);
         redisp_needed = true;
     }
 
@@ -302,19 +303,19 @@ static void readSetupJson(cJSON *root)
     if (c != NULL)
     {
         low_color = c;
-        flash_write_str("lowcolor",cname);
+        flash_write_str(setup_flash, "lowcolor",cname);
         redisp_needed = true;
     }
 
     if (getJsonInt(root, "zonelow", &setup.zonelow))
     {
-        flash_write("zonelow", setup.zonelow);
+        flash_write(setup_flash, "zonelow", setup.zonelow);
         redisp_needed = true;
     }
 
     if (getJsonInt(root, "zonehigh", &setup.zonehigh))
     {
-        flash_write("zonehigh", setup.zonehigh);
+        flash_write(setup_flash, "zonehigh", setup.zonehigh);
         redisp_needed = true;
     }
 
@@ -323,7 +324,7 @@ static void readSetupJson(cJSON *root)
         ESP_LOGI(TAG,"doing some reinit stuff.");
         show_internaltemp(8888);
     }
-    flash_commitchanges();
+    flash_commitchanges(setup_flash);
 }
 
 
@@ -371,7 +372,7 @@ static uint8_t handleJson(esp_mqtt_event_handle_t event, uint8_t *chipid)
     else if (!strcmp(id,"sensorsetup"))
     {
         strncpy(setup.specialsensor,getJsonStr(root,"specialsensor"),20);
-        flash_write_str("specsensor", setup.specialsensor);
+        flash_write_str(setup_flash, "specsensor", setup.specialsensor);
         ret |= SETUP_SENSORS;
     }
     else if (!strcmp(id,"sensorfriendlyname"))
@@ -514,7 +515,7 @@ static void sendInfo(esp_mqtt_client_handle_t client, uint8_t *chipid)
 
     sprintf(infoTopic,"%s/%s/%x%x%x/info",
          comminfo->mqtt_prefix, appname, chipid[3],chipid[4],chipid[5]);
-    sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"info\",\"memfree\":%d,\"idfversion\":\"%s\",\"progversion\":%s}",
+    sprintf(jsondata, "{\"dev\":\"%x%x%x\",\"id\":\"info\",\"memfree\":%d,\"idfversion\":\"%s\",\"progversion\":\"%s\"}",
                 chipid[3],chipid[4],chipid[5],
                 esp_get_free_heap_size(),
                 esp_get_idf_version(),
@@ -703,7 +704,7 @@ static void get_sensor_friendlynames(void)
         sensorname   = temperature_getsensor(i);
         if (sensorname == NULL)
             break;
-        friendlyname = flash_read_str(sensorname, sensorname, 20);
+        friendlyname = flash_read_str(setup_flash, sensorname, sensorname, 20);
         if (strcmp(friendlyname, sensorname))
         {
             if (!temperature_set_friendlyname(sensorname, friendlyname))
@@ -719,15 +720,16 @@ struct netinfo *get_networkinfo()
 {
     static struct netinfo ni;
     char *default_ssid = "XXXXXXXX";
+    nvs_handle wifi_flash = flash_open("wifisetup");
 
-    ni.ssid = flash_read_str("ssid",default_ssid, 20);
+    ni.ssid = flash_read_str(wifi_flash, "ssid",default_ssid, 20);
     if (!strcmp(ni.ssid,"XXXXXXXX"))
         return NULL;
 
-    ni.password    = flash_read_str("password","pass", 20);
-    ni.mqtt_server = flash_read_str("mqtt_server","test.mosquitto.org", 20);
-    ni.mqtt_port   = flash_read_str("mqtt_port","1883", 6);
-    ni.mqtt_prefix = flash_read_str("mqtt_prefix","home/esp", 20);
+    ni.password    = flash_read_str(wifi_flash, "password","pass", 20);
+    ni.mqtt_server = flash_read_str(wifi_flash, "mqtt_server","test.mosquitto.org", 20);
+    ni.mqtt_port   = flash_read_str(wifi_flash, "mqtt_port","1883", 6);
+    ni.mqtt_prefix = flash_read_str(wifi_flash, "mqtt_prefix","home/esp", 20);
     return &ni;
 }
 
@@ -735,20 +737,20 @@ void readSetup(void)
 {
     char *colorname;
 
-    strcpy(setup.specialsensor, flash_read_str("specsensor", setup.specialsensor,12));
-    colorname = flash_read_str("defaultcolor", default_color->name, 12);
+    strcpy(setup.specialsensor, flash_read_str(setup_flash, "specsensor", setup.specialsensor,12));
+    colorname = flash_read_str(setup_flash, "defaultcolor", default_color->name, 12);
     default_color = get_color(colorname);
 
-    colorname = flash_read_str("highcolor", high_color->name, 12);
+    colorname = flash_read_str(setup_flash, "highcolor", high_color->name, 12);
     high_color = get_color(colorname);
 
-    colorname = flash_read_str("lowcolor", low_color->name, 12);
+    colorname = flash_read_str(setup_flash, "lowcolor", low_color->name, 12);
     low_color = get_color(colorname);
 
-    setup.zonelow  = flash_read("zonelow", setup.zonelow);
-    setup.zonehigh = flash_read("zonehigh", setup.zonehigh);
+    setup.zonelow  = flash_read(setup_flash, "zonelow", setup.zonelow);
+    setup.zonehigh = flash_read(setup_flash, "zonehigh", setup.zonehigh);
 
-    setup.showinternaltemp = flash_read("inttemp", setup.showinternaltemp);
+    setup.showinternaltemp = flash_read(setup_flash, "inttemp", setup.showinternaltemp);
 }
 
 
@@ -808,6 +810,7 @@ void app_main(void)
     }
     else
     {
+        setup_flash = flash_open("storage");
         evt_queue = xQueueCreate(10, sizeof(struct measurement));
         
         gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);

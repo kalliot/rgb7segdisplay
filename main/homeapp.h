@@ -1,7 +1,11 @@
 #ifndef __HOMEAPP__
 #define __HOMEAPP__
 
+#include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "flashmem.h"
+
 
 #define DEBUG_TO_MQTT 1
 
@@ -16,6 +20,7 @@ enum meastype
 struct measurement {
     enum meastype id;
     int gpio;
+    int err;
     union {
         int count;
         bool state;
@@ -25,6 +30,7 @@ struct measurement {
 
 extern QueueHandle_t evt_queue;
 extern char jsondata[];
+extern nvs_handle setup_flash;
 
 #define BLINK_GPIO         2
 #define SETUP_GPIO         CONFIG_SETUPLED_GPIO

@@ -3,13 +3,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "driver/gpio.h"
+#include "esp_log.h"
 #include "flashmem.h"
 #include "factoryreset.h"
-#include "esp_log.h"
+#include "homeapp.h"
 
 static int reset_gpio = 22;
 static SemaphoreHandle_t xSemaphore;
-static const char *TAG = "FACTORYRESET";
+static const char *TAG = "factoryreset";
 
 static void IRAM_ATTR gpio_isr_handler()
 {
@@ -22,8 +23,8 @@ static void reset_reader(void *arg)
         if (xSemaphoreTake(xSemaphore, portMAX_DELAY)) {
             vTaskDelay(100 / portTICK_PERIOD_MS); // wait for all glitches
             if (gpio_get_level(reset_gpio) == 0) {
-                flash_erase_all();
-                flash_commitchanges();
+                flash_erase_all(setup_flash);
+                flash_commitchanges(setup_flash);
                 ESP_LOGI(TAG,"**** restarting ****");
                 vTaskDelay(200 / portTICK_PERIOD_MS); 
                 esp_restart();
@@ -35,7 +36,7 @@ static void reset_reader(void *arg)
 
 void factoryreset_init()
 {
-    ESP_LOGI(TAG,"factoryreset init.");
+    ESP_LOGI(TAG,"factoryreset init");
     
     xSemaphore = xSemaphoreCreateBinary();
     gpio_reset_pin(reset_gpio);

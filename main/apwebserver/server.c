@@ -26,6 +26,7 @@
 
 
 static const char *TAG = "wifi_AP_WEBserver";
+static nvs_handle wifi_flash;
 
 struct form_field {
     char *formname;
@@ -79,6 +80,7 @@ static esp_err_t form_get_handler(httpd_req_t *req)
 
     /* Get header value string length and allocate memory for length + 1,
      * extra byte for null termination */
+    gpio_set_level(BLINK_GPIO, true);
     buf_len = httpd_req_get_hdr_value_len(req, "Host") + 1;
     if (buf_len > 1)
     {
@@ -134,7 +136,7 @@ static esp_err_t form_get_handler(httpd_req_t *req)
                     {
                         char *result = urlDecode(param);
                         ESP_LOGI(TAG, "%s=%s", form_fields[i].formname, result);
-                        flash_write_str(form_fields[i].flashname, result);
+                        flash_write_str(wifi_flash, form_fields[i].flashname, result);
                     }    
                 }
                 else
@@ -147,11 +149,12 @@ static esp_err_t form_get_handler(httpd_req_t *req)
         }
         if (success) {
             req->user_ctx = "<html><body><br><h2>Parameters saved, now reboot</h2><br></body></html>";
-            flash_commitchanges();
+            flash_commitchanges(wifi_flash);
         }    
         else
             req->user_ctx = "<html><body><br><h2>Failed, try again.</h2><br></body></html>";
         free(buf);
+        gpio_set_level(BLINK_GPIO, false);
     }
 
     /* Set some custom headers */
@@ -228,6 +231,7 @@ static void disconnect_handler(void* arg, esp_event_base_t event_base, int32_t e
     if (*server) {
         ESP_LOGI(TAG, "Stopping webserver");
         stop_webserver(*server);
+        gpio_set_level(WLANSTATUS_GPIO, false);
         *server = NULL;
     }
 }
@@ -238,6 +242,7 @@ static void connect_handler(void* arg, esp_event_base_t event_base, int32_t even
     httpd_handle_t* server = (httpd_handle_t*) arg;
     if (*server == NULL) {
         ESP_LOGI(TAG, "Starting webserver");
+        gpio_set_level(WLANSTATUS_GPIO, true);
         *server = start_webserver();
     }
 }
@@ -294,6 +299,7 @@ void server_init()
 {
     httpd_handle_t server = NULL;
 
+    wifi_flash = flash_open("wifisetup");
     /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
      * Read "Establishing Wi-Fi or Ethernet Connection" section in
      * examples/protocols/README.md for more information about this function.
